@@ -17,6 +17,7 @@ namespace esp32_wifi_manager {
 class WifiManager {
 public:
     WifiManager() = default;
+    ~WifiManager();
 
     esp_err_t Init(const WifiManagerConfig& config,
                    WifiStateChangedCallback stateChanged = nullptr,
@@ -27,7 +28,7 @@ public:
     esp_err_t ProcessNextEvent();
     bool AdvanceRetryTimer(uint32_t elapsedMs);
     esp_err_t DispatchEvent(const WifiManagerEvent& event);
-    void Stop();
+    esp_err_t Stop();
     void ForceProvisioning();
 
     WifiState GetState() const;
@@ -39,6 +40,7 @@ public:
 private:
     static esp_err_t OnAdapterEvent(const WifiManagerEvent& event, void* eventContext);
     void SetState(WifiState newState);
+    void SetState(WifiState newState, bool applyRuntime);
 
     WifiManagerConfig config_{};
     WifiStateChangedCallback stateChanged_ = nullptr;

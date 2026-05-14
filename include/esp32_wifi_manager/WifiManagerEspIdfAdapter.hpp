@@ -4,6 +4,7 @@ extern "C" {
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "esp_wifi_default.h"
 }
 
 #include "esp_err.h"
@@ -24,7 +25,9 @@ public:
     esp_err_t ApplyState(WifiState state,
                          const WifiCredentials& credentials,
                          uint32_t reconnectDelayMs);
-    void Stop();
+    void DetachEventSink();
+    esp_err_t Stop();
+    esp_err_t Deinit();
 
     bool IsInitialized() const;
 
@@ -45,6 +48,11 @@ private:
     esp_event_handler_instance_t wifiEventHandler_{};
     esp_event_handler_instance_t ipEventHandler_{};
     uint32_t scheduledReconnectDelayMs_ = 0;
+    bool suppressDisconnectEvent_ = false;
+    bool ownsStaNetif_ = false;
+    bool ownsWifiInit_ = false;
+    bool wifiHandlerRegistered_ = false;
+    bool ipHandlerRegistered_ = false;
     bool initialized_ = false;
     bool started_ = false;
     bool wifiStarted_ = false;
