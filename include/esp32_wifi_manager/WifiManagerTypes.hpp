@@ -7,6 +7,7 @@ namespace esp32_wifi_manager {
 enum class WifiState : uint8_t {
     kInit = 0,
     kConnecting,
+    kWaitingToRetry,
     kConnected,
     kPortal,
     kStopped,
@@ -18,6 +19,7 @@ enum class WifiManagerEventType : uint8_t {
     kCredentialsReceived,
     kConnectionSucceeded,
     kConnectionFailed,
+    kRetryTimerElapsed,
 };
 
 struct WifiCredentials {

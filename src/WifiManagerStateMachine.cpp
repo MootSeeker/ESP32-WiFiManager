@@ -52,10 +52,16 @@ WifiState WifiManagerStateMachine::OnConnectionFailed(uint8_t maxConnectAttempts
     }
 
     ++connectAttempts_;
-    state_ = connectAttempts_ < maxConnectAttempts ? WifiState::kConnecting : WifiState::kPortal;
-    reconnectDelayMs_ = state_ == WifiState::kConnecting
+    state_ = connectAttempts_ < maxConnectAttempts ? WifiState::kWaitingToRetry : WifiState::kPortal;
+    reconnectDelayMs_ = state_ == WifiState::kWaitingToRetry
                             ? CalculateReconnectDelayMs(initialReconnectDelayMs, maxReconnectDelayMs)
                             : 0;
+    return state_;
+}
+
+WifiState WifiManagerStateMachine::OnRetryTimerElapsed()
+{
+    state_ = WifiState::kConnecting;
     return state_;
 }
 

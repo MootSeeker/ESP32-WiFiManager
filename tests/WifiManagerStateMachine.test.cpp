@@ -2,11 +2,13 @@
 #include <iostream>
 
 #include "esp32_wifi_manager/WifiManagerEventQueue.hpp"
+#include "esp32_wifi_manager/WifiRetryScheduler.hpp"
 #include "esp32_wifi_manager/WifiManagerStateMachine.hpp"
 
 using esp32_wifi_manager::WifiManagerEvent;
 using esp32_wifi_manager::WifiManagerEventQueue;
 using esp32_wifi_manager::WifiManagerEventType;
+using esp32_wifi_manager::WifiRetryScheduler;
 using esp32_wifi_manager::WifiManagerStateMachine;
 using esp32_wifi_manager::WifiState;
 
@@ -51,8 +53,8 @@ bool ShouldRetryBeforePortalFallback()
         return false;
     }
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(3, 1000, 8000), WifiState::kConnecting,
-                     "expected first connection failure to stay in connecting state")) {
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(3, 1000, 8000), WifiState::kWaitingToRetry,
+                     "expected first connection failure to enter waiting-to-retry state")) {
         return false;
     }
 
@@ -66,8 +68,13 @@ bool ShouldRetryBeforePortalFallback()
         return false;
     }
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(3, 1000, 8000), WifiState::kConnecting,
-                     "expected second connection failure to still retry")) {
+    if (!ExpectEqual(stateMachine.OnRetryTimerElapsed(), WifiState::kConnecting,
+                     "expected retry timer to return the state machine to connecting")) {
+        return false;
+    }
+
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(3, 1000, 8000), WifiState::kWaitingToRetry,
+                     "expected second connection failure to still wait before retrying")) {
         return false;
     }
 
@@ -132,12 +139,12 @@ bool ShouldCapReconnectDelay()
     WifiManagerStateMachine stateMachine;
     stateMachine.OnStart(false, true);
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kConnecting,
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kWaitingToRetry,
                      "expected first failure to retry before cap test")) {
         return false;
     }
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kConnecting,
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kWaitingToRetry,
                      "expected second failure to retry before cap test")) {
         return false;
     }
@@ -153,13 +160,57 @@ bool ShouldSaturateReconnectDelayAtConfiguredMaximum()
     stateMachine.OnConnectionFailed(5, 1000, 2500);
     stateMachine.OnConnectionFailed(5, 1000, 2500);
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kConnecting,
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kWaitingToRetry,
                      "expected third failure to continue retrying before portal fallback")) {
         return false;
     }
 
     return ExpectEqual(stateMachine.GetReconnectDelayMs(), 2500,
                        "expected reconnect delay to saturate at configured maximum");
+}
+
+bool ShouldExpireRetrySchedulerWhenElapsedTimeReachesDelay()
+{
+    WifiRetryScheduler scheduler;
+    scheduler.Arm(1500);
+
+    if (scheduler.Advance(500)) {
+        std::cerr << "expected scheduler to remain armed before delay is exhausted" << std::endl;
+        return false;
+    }
+
+    if (!ExpectEqual(scheduler.RemainingDelayMs(), 1000,
+                     "expected scheduler to reduce remaining delay after partial advance")) {
+        return false;
+    }
+
+    if (!scheduler.Advance(1000)) {
+        std::cerr << "expected scheduler to expire when accumulated time reaches delay" << std::endl;
+        return false;
+    }
+
+    return ExpectEqual(static_cast<uint8_t>(scheduler.IsArmed()), 0,
+                       "expected scheduler to disarm after expiry");
+}
+
+bool ShouldCancelRetryScheduler()
+{
+    WifiRetryScheduler scheduler;
+    scheduler.Arm(2000);
+    scheduler.Cancel();
+
+    if (scheduler.Advance(2000)) {
+        std::cerr << "expected cancelled scheduler to ignore elapsed time" << std::endl;
+        return false;
+    }
+
+    if (!ExpectEqual(static_cast<uint8_t>(scheduler.IsArmed()), 0,
+                     "expected cancelled scheduler to stay disarmed")) {
+        return false;
+    }
+
+    return ExpectEqual(scheduler.RemainingDelayMs(), 0,
+                       "expected cancelled scheduler to clear remaining delay");
 }
 
 bool ShouldPreserveEventOrderInQueue()
@@ -240,6 +291,14 @@ int main()
     }
 
     if (!ShouldSaturateReconnectDelayAtConfiguredMaximum()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldExpireRetrySchedulerWhenElapsedTimeReachesDelay()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldCancelRetryScheduler()) {
         return EXIT_FAILURE;
     }
 

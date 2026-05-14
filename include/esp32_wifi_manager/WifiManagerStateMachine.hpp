@@ -15,6 +15,7 @@ public:
     WifiState OnConnectionFailed(uint8_t maxConnectAttempts,
                                  uint32_t initialReconnectDelayMs,
                                  uint32_t maxReconnectDelayMs);
+    WifiState OnRetryTimerElapsed();
     WifiState OnStop();
 
     WifiState GetState() const;

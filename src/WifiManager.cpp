@@ -24,6 +24,7 @@ esp_err_t WifiManager::Init(const WifiManagerConfig& config,
     hasStoredCredentials_ = false;
     activeCredentials_ = {};
     eventQueue_.Clear();
+    retryScheduler_.Cancel();
     stateMachine_.Reset();
     SetState(WifiState::kInit);
     return ESP_OK;
@@ -44,6 +45,7 @@ esp_err_t WifiManager::Start()
 
     WifiCredentialStore credentialStore(config_.nvsNamespace);
     hasStoredCredentials_ = credentialStore.Load(activeCredentials_);
+    retryScheduler_.Cancel();
 
     SetState(stateMachine_.OnStart(forceProvisioning_, hasStoredCredentials_));
     return ESP_OK;
@@ -72,6 +74,21 @@ esp_err_t WifiManager::ProcessNextEvent()
     return DispatchEvent(event);
 }
 
+bool WifiManager::AdvanceRetryTimer(uint32_t elapsedMs)
+{
+    if (!initialized_) {
+        return false;
+    }
+
+    if (!retryScheduler_.Advance(elapsedMs)) {
+        return false;
+    }
+
+    WifiManagerEvent event;
+    event.type = WifiManagerEventType::kRetryTimerElapsed;
+    return EnqueueEvent(event) == ESP_OK;
+}
+
 esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
 {
     if (!initialized_) {
@@ -96,6 +113,7 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
         activeCredentials_ = event.credentials;
         hasStoredCredentials_ = true;
         forceProvisioning_ = false;
+        retryScheduler_.Cancel();
 
         if (running_) {
             SetState(stateMachine_.OnCredentialsReceived());
@@ -108,6 +126,7 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
             return ESP_ERR_INVALID_STATE;
         }
 
+        retryScheduler_.Cancel();
         SetState(stateMachine_.OnConnectionSucceeded());
         return ESP_OK;
 
@@ -120,6 +139,22 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
             config_.maxConnectAttempts,
             config_.initialReconnectDelayMs,
             config_.maxReconnectDelayMs));
+
+        if (GetState() == WifiState::kWaitingToRetry) {
+            retryScheduler_.Arm(stateMachine_.GetReconnectDelayMs());
+        } else {
+            retryScheduler_.Cancel();
+        }
+
+        return ESP_OK;
+
+    case WifiManagerEventType::kRetryTimerElapsed:
+        if (!running_) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        retryScheduler_.Cancel();
+        SetState(stateMachine_.OnRetryTimerElapsed());
         return ESP_OK;
     }
 
@@ -135,12 +170,14 @@ void WifiManager::Stop()
     running_ = false;
     hasStoredCredentials_ = false;
     eventQueue_.Clear();
+    retryScheduler_.Cancel();
     SetState(stateMachine_.OnStop());
 }
 
 void WifiManager::ForceProvisioning()
 {
     forceProvisioning_ = true;
+    retryScheduler_.Cancel();
     if (running_) {
         SetState(stateMachine_.OnProvisioningRequested());
     }
