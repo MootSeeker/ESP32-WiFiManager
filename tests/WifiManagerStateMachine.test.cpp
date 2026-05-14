@@ -1,8 +1,12 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "esp32_wifi_manager/WifiManagerEventQueue.hpp"
 #include "esp32_wifi_manager/WifiManagerStateMachine.hpp"
 
+using esp32_wifi_manager::WifiManagerEvent;
+using esp32_wifi_manager::WifiManagerEventQueue;
+using esp32_wifi_manager::WifiManagerEventType;
 using esp32_wifi_manager::WifiManagerStateMachine;
 using esp32_wifi_manager::WifiState;
 
@@ -88,6 +92,59 @@ bool ShouldResetRetriesAfterSuccessAndProvisioning()
                        "expected provisioning request to keep retry count cleared");
 }
 
+bool ShouldPreserveEventOrderInQueue()
+{
+    WifiManagerEventQueue queue;
+
+    WifiManagerEvent firstEvent;
+    firstEvent.type = WifiManagerEventType::kProvisioningRequested;
+
+    WifiManagerEvent secondEvent;
+    secondEvent.type = WifiManagerEventType::kConnectionFailed;
+
+    if (!queue.Push(firstEvent) || !queue.Push(secondEvent)) {
+        std::cerr << "expected queue push operations to succeed" << std::endl;
+        return false;
+    }
+
+    WifiManagerEvent actualEvent;
+    if (!queue.Pop(actualEvent) || actualEvent.type != WifiManagerEventType::kProvisioningRequested) {
+        std::cerr << "expected queue to return first event first" << std::endl;
+        return false;
+    }
+
+    if (!queue.Pop(actualEvent) || actualEvent.type != WifiManagerEventType::kConnectionFailed) {
+        std::cerr << "expected queue to return second event second" << std::endl;
+        return false;
+    }
+
+    return ExpectEqual(static_cast<uint8_t>(queue.Size()), 0,
+                       "expected queue to be empty after popping all events");
+}
+
+bool ShouldRejectEventsWhenQueueIsFull()
+{
+    WifiManagerEventQueue queue;
+    WifiManagerEvent event;
+    event.type = WifiManagerEventType::kConnectionFailed;
+
+    for (size_t index = 0; index < WifiManagerEventQueue::kCapacity; ++index) {
+        if (!queue.Push(event)) {
+            std::cerr << "expected push to succeed before queue reaches capacity" << std::endl;
+            return false;
+        }
+    }
+
+    if (queue.Push(event)) {
+        std::cerr << "expected push to fail when queue is full" << std::endl;
+        return false;
+    }
+
+    return ExpectEqual(static_cast<uint8_t>(queue.Size()),
+                       static_cast<uint8_t>(WifiManagerEventQueue::kCapacity),
+                       "expected queue size to stay at capacity after failed push");
+}
+
 }  // namespace
 
 int main()
@@ -97,6 +154,14 @@ int main()
     }
 
     if (!ShouldResetRetriesAfterSuccessAndProvisioning()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldPreserveEventOrderInQueue()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldRejectEventsWhenQueueIsFull()) {
         return EXIT_FAILURE;
     }
 

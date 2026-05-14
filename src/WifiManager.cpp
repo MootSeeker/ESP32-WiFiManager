@@ -23,6 +23,7 @@ esp_err_t WifiManager::Init(const WifiManagerConfig& config,
     forceProvisioning_ = false;
     hasStoredCredentials_ = false;
     activeCredentials_ = {};
+    eventQueue_.Clear();
     stateMachine_.Reset();
     SetState(WifiState::kInit);
     return ESP_OK;
@@ -46,6 +47,29 @@ esp_err_t WifiManager::Start()
 
     SetState(stateMachine_.OnStart(forceProvisioning_, hasStoredCredentials_));
     return ESP_OK;
+}
+
+esp_err_t WifiManager::EnqueueEvent(const WifiManagerEvent& event)
+{
+    if (!initialized_) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    return eventQueue_.Push(event) ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+esp_err_t WifiManager::ProcessNextEvent()
+{
+    if (!initialized_) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    WifiManagerEvent event;
+    if (!eventQueue_.Pop(event)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    return DispatchEvent(event);
 }
 
 esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
@@ -107,6 +131,7 @@ void WifiManager::Stop()
 
     running_ = false;
     hasStoredCredentials_ = false;
+    eventQueue_.Clear();
     SetState(stateMachine_.OnStop());
 }
 
@@ -126,6 +151,11 @@ WifiState WifiManager::GetState() const
 bool WifiManager::IsRunning() const
 {
     return running_;
+}
+
+size_t WifiManager::PendingEventCount() const
+{
+    return eventQueue_.Size();
 }
 
 void WifiManager::SetState(WifiState newState)

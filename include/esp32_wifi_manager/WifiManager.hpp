@@ -5,6 +5,7 @@
 #include "esp_err.h"
 
 #include "esp32_wifi_manager/WifiCredentialStore.hpp"
+#include "esp32_wifi_manager/WifiManagerEventQueue.hpp"
 #include "esp32_wifi_manager/WifiManagerStateMachine.hpp"
 #include "esp32_wifi_manager/WifiManagerTypes.hpp"
 
@@ -19,12 +20,15 @@ public:
                    void* userContext = nullptr);
 
     esp_err_t Start();
+    esp_err_t EnqueueEvent(const WifiManagerEvent& event);
+    esp_err_t ProcessNextEvent();
     esp_err_t DispatchEvent(const WifiManagerEvent& event);
     void Stop();
     void ForceProvisioning();
 
     WifiState GetState() const;
     bool IsRunning() const;
+    size_t PendingEventCount() const;
 
 private:
     void SetState(WifiState newState);
@@ -34,6 +38,7 @@ private:
     void* userContext_ = nullptr;
     std::atomic<WifiState> state_{WifiState::kInit};
     WifiCredentials activeCredentials_{};
+    WifiManagerEventQueue eventQueue_{};
     WifiManagerStateMachine stateMachine_{};
     bool initialized_ = false;
     bool running_ = false;
