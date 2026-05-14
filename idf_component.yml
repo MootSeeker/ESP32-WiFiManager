@@ -1,0 +1,6 @@
+version: "0.1.0"
+description: "Reusable ESP-IDF WiFi manager component for ESP32 devices with provisioning fallback."
+url: "https://github.com/MootSeeker/ESP32-WiFiManager"
+dependencies:
+  idf:
+    version: ">=5.0"
