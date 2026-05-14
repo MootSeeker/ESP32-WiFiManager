@@ -11,6 +11,21 @@ bool HasSsid(const WifiCredentials& credentials)
 
 }  // namespace
 
+esp_err_t WifiManager::OnAdapterEvent(const WifiManagerEvent& event, void* eventContext)
+{
+    auto* manager = static_cast<WifiManager*>(eventContext);
+    if (manager == nullptr) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t result = manager->EnqueueEvent(event);
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    return manager->ProcessNextEvent();
+}
+
 esp_err_t WifiManager::Init(const WifiManagerConfig& config,
                             WifiStateChangedCallback stateChanged,
                             void* userContext)
@@ -23,9 +38,17 @@ esp_err_t WifiManager::Init(const WifiManagerConfig& config,
     forceProvisioning_ = false;
     hasStoredCredentials_ = false;
     activeCredentials_ = {};
+    runtimeStatus_ = {};
     eventQueue_.Clear();
     retryScheduler_.Cancel();
     stateMachine_.Reset();
+
+    const esp_err_t result = espIdfAdapter_.Init(config_, &WifiManager::OnAdapterEvent, this);
+    if (result != ESP_OK) {
+        initialized_ = false;
+        return result;
+    }
+
     SetState(WifiState::kInit);
     return ESP_OK;
 }
@@ -34,6 +57,11 @@ esp_err_t WifiManager::Start()
 {
     if (!initialized_) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t result = espIdfAdapter_.Start();
+    if (result != ESP_OK) {
+        return result;
     }
 
     running_ = true;
@@ -113,6 +141,7 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
         activeCredentials_ = event.credentials;
         hasStoredCredentials_ = true;
         forceProvisioning_ = false;
+        runtimeStatus_ = {};
         retryScheduler_.Cancel();
 
         if (running_) {
@@ -126,6 +155,7 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
             return ESP_ERR_INVALID_STATE;
         }
 
+        runtimeStatus_ = event.runtimeStatus;
         retryScheduler_.Cancel();
         SetState(stateMachine_.OnConnectionSucceeded());
         return ESP_OK;
@@ -135,6 +165,7 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
             return ESP_ERR_INVALID_STATE;
         }
 
+        runtimeStatus_ = event.runtimeStatus;
         SetState(stateMachine_.OnConnectionFailed(
             config_.maxConnectAttempts,
             config_.initialReconnectDelayMs,
@@ -172,6 +203,7 @@ void WifiManager::Stop()
     eventQueue_.Clear();
     retryScheduler_.Cancel();
     SetState(stateMachine_.OnStop());
+    espIdfAdapter_.Stop();
 }
 
 void WifiManager::ForceProvisioning()
@@ -193,6 +225,11 @@ uint32_t WifiManager::GetReconnectDelayMs() const
     return stateMachine_.GetReconnectDelayMs();
 }
 
+WifiRuntimeStatus WifiManager::GetRuntimeStatus() const
+{
+    return runtimeStatus_;
+}
+
 bool WifiManager::IsRunning() const
 {
     return running_;
@@ -209,6 +246,8 @@ void WifiManager::SetState(WifiState newState)
     if (stateChanged_) {
         stateChanged_(newState, userContext_);
     }
+
+    espIdfAdapter_.ApplyState(newState, activeCredentials_, GetReconnectDelayMs());
 }
 
 }  // namespace esp32_wifi_manager

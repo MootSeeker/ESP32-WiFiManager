@@ -1,10 +1,12 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 
 #include "esp_err.h"
 
 #include "esp32_wifi_manager/WifiCredentialStore.hpp"
+#include "esp32_wifi_manager/WifiManagerEspIdfAdapter.hpp"
 #include "esp32_wifi_manager/WifiManagerEventQueue.hpp"
 #include "esp32_wifi_manager/WifiRetryScheduler.hpp"
 #include "esp32_wifi_manager/WifiManagerStateMachine.hpp"
@@ -30,10 +32,12 @@ public:
 
     WifiState GetState() const;
     uint32_t GetReconnectDelayMs() const;
+    WifiRuntimeStatus GetRuntimeStatus() const;
     bool IsRunning() const;
     size_t PendingEventCount() const;
 
 private:
+    static esp_err_t OnAdapterEvent(const WifiManagerEvent& event, void* eventContext);
     void SetState(WifiState newState);
 
     WifiManagerConfig config_{};
@@ -41,6 +45,8 @@ private:
     void* userContext_ = nullptr;
     std::atomic<WifiState> state_{WifiState::kInit};
     WifiCredentials activeCredentials_{};
+    WifiRuntimeStatus runtimeStatus_{};
+    WifiManagerEspIdfAdapter espIdfAdapter_{};
     WifiManagerEventQueue eventQueue_{};
     WifiRetryScheduler retryScheduler_{};
     WifiManagerStateMachine stateMachine_{};

@@ -27,9 +27,17 @@ struct WifiCredentials {
     char password[65];
 };
 
+struct WifiRuntimeStatus {
+    uint8_t disconnectReason = 0;
+    uint32_t ipAddress = 0;
+    uint32_t netmask = 0;
+    uint32_t gateway = 0;
+};
+
 struct WifiManagerEvent {
     WifiManagerEventType type = WifiManagerEventType::kProvisioningRequested;
     WifiCredentials credentials{};
+    WifiRuntimeStatus runtimeStatus{};
 };
 
 struct WifiManagerConfig {

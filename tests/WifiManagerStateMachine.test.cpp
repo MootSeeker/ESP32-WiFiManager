@@ -9,6 +9,7 @@ using esp32_wifi_manager::WifiManagerEvent;
 using esp32_wifi_manager::WifiManagerEventQueue;
 using esp32_wifi_manager::WifiManagerEventType;
 using esp32_wifi_manager::WifiRetryScheduler;
+using esp32_wifi_manager::WifiRuntimeStatus;
 using esp32_wifi_manager::WifiManagerStateMachine;
 using esp32_wifi_manager::WifiState;
 
@@ -219,9 +220,11 @@ bool ShouldPreserveEventOrderInQueue()
 
     WifiManagerEvent firstEvent;
     firstEvent.type = WifiManagerEventType::kProvisioningRequested;
+    firstEvent.runtimeStatus.disconnectReason = 7;
 
     WifiManagerEvent secondEvent;
     secondEvent.type = WifiManagerEventType::kConnectionFailed;
+    secondEvent.runtimeStatus.disconnectReason = 42;
 
     if (!queue.Push(firstEvent) || !queue.Push(secondEvent)) {
         std::cerr << "expected queue push operations to succeed" << std::endl;
@@ -229,12 +232,16 @@ bool ShouldPreserveEventOrderInQueue()
     }
 
     WifiManagerEvent actualEvent;
-    if (!queue.Pop(actualEvent) || actualEvent.type != WifiManagerEventType::kProvisioningRequested) {
+    if (!queue.Pop(actualEvent) ||
+        actualEvent.type != WifiManagerEventType::kProvisioningRequested ||
+        actualEvent.runtimeStatus.disconnectReason != 7) {
         std::cerr << "expected queue to return first event first" << std::endl;
         return false;
     }
 
-    if (!queue.Pop(actualEvent) || actualEvent.type != WifiManagerEventType::kConnectionFailed) {
+    if (!queue.Pop(actualEvent) ||
+        actualEvent.type != WifiManagerEventType::kConnectionFailed ||
+        actualEvent.runtimeStatus.disconnectReason != 42) {
         std::cerr << "expected queue to return second event second" << std::endl;
         return false;
     }
@@ -264,6 +271,43 @@ bool ShouldRejectEventsWhenQueueIsFull()
     return ExpectEqual(static_cast<uint8_t>(queue.Size()),
                        static_cast<uint8_t>(WifiManagerEventQueue::kCapacity),
                        "expected queue size to stay at capacity after failed push");
+}
+
+bool ShouldStoreRuntimeStatusPayload()
+{
+    WifiRuntimeStatus status;
+    status.ipAddress = 0x01020304;
+    status.netmask = 0xffffff00;
+    status.gateway = 0x01020301;
+
+    WifiManagerEvent event;
+    event.type = WifiManagerEventType::kConnectionSucceeded;
+    event.runtimeStatus = status;
+
+    WifiManagerEventQueue queue;
+    if (!queue.Push(event)) {
+        std::cerr << "expected runtime status event to be enqueued" << std::endl;
+        return false;
+    }
+
+    WifiManagerEvent actualEvent;
+    if (!queue.Pop(actualEvent)) {
+        std::cerr << "expected runtime status event to be dequeued" << std::endl;
+        return false;
+    }
+
+    if (!ExpectEqual(actualEvent.runtimeStatus.ipAddress, 0x01020304,
+                     "expected IP address to survive queue round-trip")) {
+        return false;
+    }
+
+    if (!ExpectEqual(actualEvent.runtimeStatus.netmask, 0xffffff00,
+                     "expected netmask to survive queue round-trip")) {
+        return false;
+    }
+
+    return ExpectEqual(actualEvent.runtimeStatus.gateway, 0x01020301,
+                       "expected gateway to survive queue round-trip");
 }
 
 }  // namespace
@@ -299,6 +343,10 @@ int main()
     }
 
     if (!ShouldCancelRetryScheduler()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldStoreRuntimeStatusPayload()) {
         return EXIT_FAILURE;
     }
 
