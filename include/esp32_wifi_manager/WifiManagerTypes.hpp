@@ -16,6 +16,8 @@ enum class WifiState : uint8_t {
 enum class WifiManagerEventType : uint8_t {
     kProvisioningRequested = 0,
     kCredentialsReceived,
+    kConnectionSucceeded,
+    kConnectionFailed,
 };
 
 struct WifiCredentials {

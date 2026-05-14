@@ -23,6 +23,7 @@ esp_err_t WifiManager::Init(const WifiManagerConfig& config,
     forceProvisioning_ = false;
     hasStoredCredentials_ = false;
     activeCredentials_ = {};
+    stateMachine_.Reset();
     SetState(WifiState::kInit);
     return ESP_OK;
 }
@@ -43,7 +44,7 @@ esp_err_t WifiManager::Start()
     WifiCredentialStore credentialStore(config_.nvsNamespace);
     hasStoredCredentials_ = credentialStore.Load(activeCredentials_);
 
-    SetState(hasStoredCredentials_ ? WifiState::kConnecting : WifiState::kPortal);
+    SetState(stateMachine_.OnStart(forceProvisioning_, hasStoredCredentials_));
     return ESP_OK;
 }
 
@@ -73,9 +74,25 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
         forceProvisioning_ = false;
 
         if (running_) {
-            SetState(WifiState::kConnecting);
+            SetState(stateMachine_.OnCredentialsReceived());
         }
 
+        return ESP_OK;
+
+    case WifiManagerEventType::kConnectionSucceeded:
+        if (!running_) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        SetState(stateMachine_.OnConnectionSucceeded());
+        return ESP_OK;
+
+    case WifiManagerEventType::kConnectionFailed:
+        if (!running_) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        SetState(stateMachine_.OnConnectionFailed(config_.maxConnectAttempts));
         return ESP_OK;
     }
 
@@ -90,14 +107,14 @@ void WifiManager::Stop()
 
     running_ = false;
     hasStoredCredentials_ = false;
-    SetState(WifiState::kStopped);
+    SetState(stateMachine_.OnStop());
 }
 
 void WifiManager::ForceProvisioning()
 {
     forceProvisioning_ = true;
     if (running_) {
-        SetState(WifiState::kPortal);
+        SetState(stateMachine_.OnProvisioningRequested());
     }
 }
 

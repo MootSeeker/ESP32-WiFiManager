@@ -5,6 +5,7 @@
 #include "esp_err.h"
 
 #include "esp32_wifi_manager/WifiCredentialStore.hpp"
+#include "esp32_wifi_manager/WifiManagerStateMachine.hpp"
 #include "esp32_wifi_manager/WifiManagerTypes.hpp"
 
 namespace esp32_wifi_manager {
@@ -33,6 +34,7 @@ private:
     void* userContext_ = nullptr;
     std::atomic<WifiState> state_{WifiState::kInit};
     WifiCredentials activeCredentials_{};
+    WifiManagerStateMachine stateMachine_{};
     bool initialized_ = false;
     bool running_ = false;
     bool forceProvisioning_ = false;
