@@ -27,6 +27,7 @@ public:
     void ForceProvisioning();
 
     WifiState GetState() const;
+    uint32_t GetReconnectDelayMs() const;
     bool IsRunning() const;
     size_t PendingEventCount() const;
 

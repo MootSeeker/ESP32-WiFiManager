@@ -37,6 +37,8 @@ struct WifiManagerConfig {
     uint8_t apMaxConnections = 4;
     uint8_t maxConnectAttempts = 5;
     uint32_t connectTimeoutMs = 15000;
+    uint32_t initialReconnectDelayMs = 1000;
+    uint32_t maxReconnectDelayMs = 30000;
 };
 
 using WifiStateChangedCallback = void (*)(WifiState newState, void* userContext);

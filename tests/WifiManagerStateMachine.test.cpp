@@ -32,6 +32,16 @@ bool ExpectEqual(uint8_t actual, uint8_t expected, const char* message)
     return false;
 }
 
+bool ExpectEqual(uint32_t actual, uint32_t expected, const char* message)
+{
+    if (actual == expected) {
+        return true;
+    }
+
+    std::cerr << message << std::endl;
+    return false;
+}
+
 bool ShouldRetryBeforePortalFallback()
 {
     WifiManagerStateMachine stateMachine;
@@ -41,7 +51,7 @@ bool ShouldRetryBeforePortalFallback()
         return false;
     }
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(3), WifiState::kConnecting,
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(3, 1000, 8000), WifiState::kConnecting,
                      "expected first connection failure to stay in connecting state")) {
         return false;
     }
@@ -51,18 +61,33 @@ bool ShouldRetryBeforePortalFallback()
         return false;
     }
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(3), WifiState::kConnecting,
+    if (!ExpectEqual(stateMachine.GetReconnectDelayMs(), 1000,
+                     "expected first connection failure to set initial reconnect delay")) {
+        return false;
+    }
+
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(3, 1000, 8000), WifiState::kConnecting,
                      "expected second connection failure to still retry")) {
         return false;
     }
 
-    if (!ExpectEqual(stateMachine.OnConnectionFailed(3), WifiState::kPortal,
+    if (!ExpectEqual(stateMachine.GetReconnectDelayMs(), 2000,
+                     "expected second connection failure to double reconnect delay")) {
+        return false;
+    }
+
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(3, 1000, 8000), WifiState::kPortal,
                      "expected final allowed connection failure to fall back to portal")) {
         return false;
     }
 
-    return ExpectEqual(stateMachine.GetConnectAttempts(), 3,
-                       "expected retry count to reflect the failure threshold");
+    if (!ExpectEqual(stateMachine.GetConnectAttempts(), 3,
+                     "expected retry count to reflect the failure threshold")) {
+        return false;
+    }
+
+    return ExpectEqual(stateMachine.GetReconnectDelayMs(), 0,
+                       "expected portal fallback to clear reconnect delay");
 }
 
 bool ShouldResetRetriesAfterSuccessAndProvisioning()
@@ -70,8 +95,8 @@ bool ShouldResetRetriesAfterSuccessAndProvisioning()
     WifiManagerStateMachine stateMachine;
 
     stateMachine.OnStart(false, true);
-    stateMachine.OnConnectionFailed(4);
-    stateMachine.OnConnectionFailed(4);
+    stateMachine.OnConnectionFailed(4, 1000, 8000);
+    stateMachine.OnConnectionFailed(4, 1000, 8000);
 
     if (!ExpectEqual(stateMachine.OnConnectionSucceeded(), WifiState::kConnected,
                      "expected success event to transition to connected")) {
@@ -83,13 +108,58 @@ bool ShouldResetRetriesAfterSuccessAndProvisioning()
         return false;
     }
 
+    if (!ExpectEqual(stateMachine.GetReconnectDelayMs(), 0,
+                     "expected success to clear reconnect delay")) {
+        return false;
+    }
+
     if (!ExpectEqual(stateMachine.OnProvisioningRequested(), WifiState::kPortal,
                      "expected provisioning request to enter portal mode")) {
         return false;
     }
 
-    return ExpectEqual(stateMachine.GetConnectAttempts(), 0,
-                       "expected provisioning request to keep retry count cleared");
+    if (!ExpectEqual(stateMachine.GetConnectAttempts(), 0,
+                     "expected provisioning request to keep retry count cleared")) {
+        return false;
+    }
+
+    return ExpectEqual(stateMachine.GetReconnectDelayMs(), 0,
+                       "expected provisioning request to keep reconnect delay cleared");
+}
+
+bool ShouldCapReconnectDelay()
+{
+    WifiManagerStateMachine stateMachine;
+    stateMachine.OnStart(false, true);
+
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kConnecting,
+                     "expected first failure to retry before cap test")) {
+        return false;
+    }
+
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kConnecting,
+                     "expected second failure to retry before cap test")) {
+        return false;
+    }
+
+    return ExpectEqual(stateMachine.GetReconnectDelayMs(), 2000,
+                       "expected reconnect delay to remain below the cap before saturation");
+}
+
+bool ShouldSaturateReconnectDelayAtConfiguredMaximum()
+{
+    WifiManagerStateMachine stateMachine;
+    stateMachine.OnStart(false, true);
+    stateMachine.OnConnectionFailed(5, 1000, 2500);
+    stateMachine.OnConnectionFailed(5, 1000, 2500);
+
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(5, 1000, 2500), WifiState::kConnecting,
+                     "expected third failure to continue retrying before portal fallback")) {
+        return false;
+    }
+
+    return ExpectEqual(stateMachine.GetReconnectDelayMs(), 2500,
+                       "expected reconnect delay to saturate at configured maximum");
 }
 
 bool ShouldPreserveEventOrderInQueue()
@@ -162,6 +232,14 @@ int main()
     }
 
     if (!ShouldRejectEventsWhenQueueIsFull()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldCapReconnectDelay()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldSaturateReconnectDelayAtConfiguredMaximum()) {
         return EXIT_FAILURE;
     }
 

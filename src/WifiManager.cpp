@@ -116,7 +116,10 @@ esp_err_t WifiManager::DispatchEvent(const WifiManagerEvent& event)
             return ESP_ERR_INVALID_STATE;
         }
 
-        SetState(stateMachine_.OnConnectionFailed(config_.maxConnectAttempts));
+        SetState(stateMachine_.OnConnectionFailed(
+            config_.maxConnectAttempts,
+            config_.initialReconnectDelayMs,
+            config_.maxReconnectDelayMs));
         return ESP_OK;
     }
 
@@ -146,6 +149,11 @@ void WifiManager::ForceProvisioning()
 WifiState WifiManager::GetState() const
 {
     return state_.load();
+}
+
+uint32_t WifiManager::GetReconnectDelayMs() const
+{
+    return stateMachine_.GetReconnectDelayMs();
 }
 
 bool WifiManager::IsRunning() const
