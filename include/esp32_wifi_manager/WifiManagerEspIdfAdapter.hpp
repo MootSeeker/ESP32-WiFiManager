@@ -40,16 +40,20 @@ private:
     esp_err_t EmitEvent(const WifiManagerEvent& event);
     esp_err_t EnsureWifiStarted();
     esp_err_t ConnectStation(const WifiCredentials& credentials);
+    esp_err_t StartSoftAp();
+    esp_err_t StopSoftAp();
 
     WifiManagerConfig config_{};
     WifiManagerEventSink eventSink_ = nullptr;
     void* eventContext_ = nullptr;
     esp_netif_t* staNetif_ = nullptr;
+    esp_netif_t* apNetif_ = nullptr;
     esp_event_handler_instance_t wifiEventHandler_{};
     esp_event_handler_instance_t ipEventHandler_{};
     uint32_t scheduledReconnectDelayMs_ = 0;
     bool suppressDisconnectEvent_ = false;
     bool ownsStaNetif_ = false;
+    bool ownsApNetif_ = false;
     bool ownsWifiInit_ = false;
     bool wifiHandlerRegistered_ = false;
     bool ipHandlerRegistered_ = false;

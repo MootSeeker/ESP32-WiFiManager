@@ -45,6 +45,16 @@ bool ExpectEqual(uint32_t actual, uint32_t expected, const char* message)
     return false;
 }
 
+bool ExpectEqual(bool actual, bool expected, const char* message)
+{
+    if (actual == expected) {
+        return true;
+    }
+
+    std::cerr << message << std::endl;
+    return false;
+}
+
 bool ShouldRetryBeforePortalFallback()
 {
     WifiManagerStateMachine stateMachine;
@@ -310,6 +320,125 @@ bool ShouldStoreRuntimeStatusPayload()
                        "expected gateway to survive queue round-trip");
 }
 
+bool ShouldFallbackToPortalImmediatelyWhenZeroMaxAttempts()
+{
+    WifiManagerStateMachine stateMachine;
+
+    if (!ExpectEqual(stateMachine.OnStart(false, true), WifiState::kConnecting,
+                     "expected stored credentials to start in connecting state")) {
+        return false;
+    }
+
+    if (!ExpectEqual(stateMachine.OnConnectionFailed(0, 1000, 8000), WifiState::kPortal,
+                     "expected zero max attempts to fall back to portal immediately")) {
+        return false;
+    }
+
+    if (!ExpectEqual(stateMachine.GetConnectAttempts(), 0,
+                     "expected connect attempts to stay at zero with zero max attempts")) {
+        return false;
+    }
+
+    return ExpectEqual(stateMachine.GetReconnectDelayMs(), 0,
+                       "expected reconnect delay to be zero after immediate portal fallback");
+}
+
+bool ShouldEnterPortalWhenNoStoredCredentials()
+{
+    WifiManagerStateMachine stateMachine;
+
+    return ExpectEqual(stateMachine.OnStart(false, false), WifiState::kPortal,
+                       "expected no stored credentials to enter portal directly");
+}
+
+bool ShouldEnterPortalWhenForcedProvisioning()
+{
+    WifiManagerStateMachine stateMachine;
+
+    return ExpectEqual(stateMachine.OnStart(true, true), WifiState::kPortal,
+                       "expected forced provisioning to enter portal even with stored credentials");
+}
+
+bool ShouldTransitionFromPortalToConnectingOnCredentials()
+{
+    WifiManagerStateMachine stateMachine;
+    stateMachine.OnStart(false, false);
+
+    if (!ExpectEqual(stateMachine.OnCredentialsReceived(), WifiState::kConnecting,
+                     "expected credentials received to transition from portal to connecting")) {
+        return false;
+    }
+
+    return ExpectEqual(stateMachine.GetConnectAttempts(), 0,
+                       "expected connect attempts to be reset after credentials received");
+}
+
+bool ShouldStopCleanly()
+{
+    WifiManagerStateMachine stateMachine;
+    stateMachine.OnStart(false, true);
+    stateMachine.OnConnectionSucceeded();
+
+    if (!ExpectEqual(stateMachine.OnStop(), WifiState::kStopped,
+                     "expected stop to transition to stopped state")) {
+        return false;
+    }
+
+    if (!ExpectEqual(stateMachine.GetConnectAttempts(), 0,
+                     "expected connect attempts to be zero after stop")) {
+        return false;
+    }
+
+    return ExpectEqual(stateMachine.GetReconnectDelayMs(), 0,
+                       "expected reconnect delay to be zero after stop");
+}
+
+bool ShouldHandleZeroDelayReconnect()
+{
+    WifiManagerStateMachine stateMachine;
+    stateMachine.OnStart(false, true);
+
+    stateMachine.OnConnectionFailed(3, 0, 0);
+
+    return ExpectEqual(stateMachine.GetReconnectDelayMs(), 0,
+                       "expected zero delay reconnect to produce zero reconnect delay");
+}
+
+bool ShouldNotArmSchedulerWithZeroDelay()
+{
+    WifiRetryScheduler scheduler;
+    scheduler.Arm(0);
+
+    return ExpectEqual(scheduler.IsArmed(), false,
+                       "expected scheduler to not be armed with zero delay");
+}
+
+bool ShouldHandleQueueClearCorrectly()
+{
+    WifiManagerEventQueue queue;
+    WifiManagerEvent event;
+    event.type = WifiManagerEventType::kConnectionFailed;
+
+    queue.Push(event);
+    queue.Push(event);
+    queue.Push(event);
+    queue.Clear();
+
+    if (!ExpectEqual(static_cast<uint8_t>(queue.Size()), 0,
+                     "expected queue size to be zero after clear")) {
+        return false;
+    }
+
+    event.type = WifiManagerEventType::kProvisioningRequested;
+    if (!ExpectEqual(static_cast<bool>(queue.Push(event)), true,
+                     "expected push to succeed after clear")) {
+        return false;
+    }
+
+    return ExpectEqual(static_cast<uint8_t>(queue.Size()), 1,
+                       "expected queue size to be one after push following clear");
+}
+
 }  // namespace
 
 int main()
@@ -350,5 +479,38 @@ int main()
         return EXIT_FAILURE;
     }
 
+    if (!ShouldFallbackToPortalImmediatelyWhenZeroMaxAttempts()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldEnterPortalWhenNoStoredCredentials()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldEnterPortalWhenForcedProvisioning()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldTransitionFromPortalToConnectingOnCredentials()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldStopCleanly()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldHandleZeroDelayReconnect()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldNotArmSchedulerWithZeroDelay()) {
+        return EXIT_FAILURE;
+    }
+
+    if (!ShouldHandleQueueClearCorrectly()) {
+        return EXIT_FAILURE;
+    }
+
+    std::cout << "All tests passed." << std::endl;
     return EXIT_SUCCESS;
 }

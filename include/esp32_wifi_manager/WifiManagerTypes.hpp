@@ -40,6 +40,13 @@ struct WifiManagerEvent {
     WifiRuntimeStatus runtimeStatus{};
 };
 
+struct WifiScanResult {
+    char ssid[33];
+    int8_t rssi;
+    uint8_t authMode;
+    uint8_t channel;
+};
+
 struct WifiManagerConfig {
     const char* nvsNamespace = "wifi_mgr";
     const char* apSsidPrefix = "ESP32-WiFiMgr-";

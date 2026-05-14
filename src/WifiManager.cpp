@@ -2,6 +2,10 @@
 
 extern "C" {
 #include "esp_log.h"
+#include "esp_netif.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "lwip/inet.h"
 }
 
 namespace esp32_wifi_manager {
@@ -37,6 +41,14 @@ esp_err_t WifiManager::OnAdapterEvent(const WifiManagerEvent& event, void* event
     auto* manager = static_cast<WifiManager*>(eventContext);
     if (manager == nullptr) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (manager->externalQueue_ != nullptr) {
+        auto queue = static_cast<QueueHandle_t>(manager->externalQueue_);
+        if (xQueueSendToBack(queue, &event, 0) != pdTRUE) {
+            return ESP_ERR_NO_MEM;
+        }
+        return ESP_OK;
     }
 
     esp_err_t result = manager->EnqueueEvent(event);
@@ -230,6 +242,8 @@ esp_err_t WifiManager::Stop()
         return ESP_ERR_INVALID_STATE;
     }
 
+    StopPortal();
+
     const esp_err_t stopResult = espIdfAdapter_.Stop();
     if (stopResult != ESP_OK) {
         running_ = false;
@@ -284,6 +298,11 @@ size_t WifiManager::PendingEventCount() const
     return eventQueue_.Size();
 }
 
+void WifiManager::SetExternalQueue(void* queueHandle)
+{
+    externalQueue_ = queueHandle;
+}
+
 void WifiManager::SetState(WifiState newState)
 {
     SetState(newState, true);
@@ -291,7 +310,9 @@ void WifiManager::SetState(WifiState newState)
 
 void WifiManager::SetState(WifiState newState, bool applyRuntime)
 {
+    const WifiState previousState = state_.load();
     state_.store(newState);
+
     if (stateChanged_) {
         stateChanged_(newState, userContext_);
     }
@@ -304,8 +325,82 @@ void WifiManager::SetState(WifiState newState, bool applyRuntime)
             if (stateChanged_) {
                 stateChanged_(WifiState::kError, userContext_);
             }
+            return;
         }
     }
+
+    if (newState == WifiState::kPortal && !portalActive_) {
+        StartPortal();
+    } else if (previousState == WifiState::kPortal && newState != WifiState::kPortal && portalActive_) {
+        StopPortal();
+    }
+}
+
+esp_err_t WifiManager::OnPortalEvent(const WifiManagerEvent& event, void* eventContext)
+{
+    auto* manager = static_cast<WifiManager*>(eventContext);
+    if (manager == nullptr) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (manager->externalQueue_ != nullptr) {
+        auto queue = static_cast<QueueHandle_t>(manager->externalQueue_);
+        if (xQueueSendToBack(queue, &event, 0) != pdTRUE) {
+            return ESP_ERR_NO_MEM;
+        }
+        return ESP_OK;
+    }
+
+    esp_err_t result = manager->EnqueueEvent(event);
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    return manager->ProcessNextEvent();
+}
+
+esp_err_t WifiManager::StartPortal()
+{
+    if (portalActive_) {
+        return ESP_OK;
+    }
+
+    esp_netif_ip_info_t ipInfo{};
+    esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (apNetif != nullptr) {
+        esp_netif_get_ip_info(apNetif, &ipInfo);
+    }
+
+    const uint32_t apIp = ipInfo.ip.addr != 0 ? ipInfo.ip.addr : htonl(0xC0A80401);
+
+    esp_err_t result = portalDns_.Start(apIp);
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "Failed to start DNS hijack: %s", esp_err_to_name(result));
+    }
+
+    result = portalHttp_.Start(&WifiManager::OnPortalEvent, this, scanService_, config_.portalPort);
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "Failed to start portal HTTP: %s", esp_err_to_name(result));
+        portalDns_.Stop();
+        return result;
+    }
+
+    portalActive_ = true;
+    ESP_LOGI(kTag, "Captive portal started");
+    return ESP_OK;
+}
+
+esp_err_t WifiManager::StopPortal()
+{
+    if (!portalActive_) {
+        return ESP_OK;
+    }
+
+    portalHttp_.Stop();
+    portalDns_.Stop();
+    portalActive_ = false;
+    ESP_LOGI(kTag, "Captive portal stopped");
+    return ESP_OK;
 }
 
 }  // namespace esp32_wifi_manager

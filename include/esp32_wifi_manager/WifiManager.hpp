@@ -5,12 +5,15 @@
 
 #include "esp_err.h"
 
+#include "esp32_wifi_manager/CaptivePortalDns.hpp"
+#include "esp32_wifi_manager/CaptivePortalHttp.hpp"
 #include "esp32_wifi_manager/WifiCredentialStore.hpp"
 #include "esp32_wifi_manager/WifiManagerEspIdfAdapter.hpp"
 #include "esp32_wifi_manager/WifiManagerEventQueue.hpp"
 #include "esp32_wifi_manager/WifiRetryScheduler.hpp"
 #include "esp32_wifi_manager/WifiManagerStateMachine.hpp"
 #include "esp32_wifi_manager/WifiManagerTypes.hpp"
+#include "esp32_wifi_manager/WifiScanService.hpp"
 
 namespace esp32_wifi_manager {
 
@@ -37,8 +40,13 @@ public:
     bool IsRunning() const;
     size_t PendingEventCount() const;
 
+    void SetExternalQueue(void* queueHandle);
+
 private:
     static esp_err_t OnAdapterEvent(const WifiManagerEvent& event, void* eventContext);
+    static esp_err_t OnPortalEvent(const WifiManagerEvent& event, void* eventContext);
+    esp_err_t StartPortal();
+    esp_err_t StopPortal();
     void SetState(WifiState newState);
     void SetState(WifiState newState, bool applyRuntime);
 
@@ -52,10 +60,15 @@ private:
     WifiManagerEventQueue eventQueue_{};
     WifiRetryScheduler retryScheduler_{};
     WifiManagerStateMachine stateMachine_{};
+    CaptivePortalDns portalDns_{};
+    CaptivePortalHttp portalHttp_{};
+    WifiScanService scanService_{};
     bool initialized_ = false;
     bool running_ = false;
     bool forceProvisioning_ = false;
     bool hasStoredCredentials_ = false;
+    bool portalActive_ = false;
+    void* externalQueue_ = nullptr;
 };
 
 }  // namespace esp32_wifi_manager

@@ -115,8 +115,14 @@ esp_err_t WifiManagerEspIdfAdapter::ApplyState(WifiState state,
     }
 
     switch (state) {
-    case WifiState::kConnecting:
+    case WifiState::kConnecting: {
+        const esp_err_t apResult = StopSoftAp();
+        if (apResult != ESP_OK) {
+            return apResult;
+        }
+
         return ConnectStation(credentials);
+    }
 
     case WifiState::kWaitingToRetry:
     case WifiState::kConnected:
@@ -125,22 +131,34 @@ esp_err_t WifiManagerEspIdfAdapter::ApplyState(WifiState state,
     case WifiState::kPortal:
         scheduledReconnectDelayMs_ = 0;
         if (!wifiStarted_) {
-            return ESP_OK;
-        }
-
-        {
+            esp_err_t result = EnsureWifiStarted();
+            if (result != ESP_OK) {
+                return result;
+            }
+        } else {
             const esp_err_t disconnectResult = esp_wifi_disconnect();
             suppressDisconnectEvent_ = disconnectResult == ESP_OK;
-            if (disconnectResult == ESP_ERR_WIFI_NOT_CONNECT) {
-                suppressDisconnectEvent_ = false;
-                return ESP_OK;
+            if (disconnectResult != ESP_OK && disconnectResult != ESP_ERR_WIFI_NOT_CONNECT) {
+                return disconnectResult;
             }
 
-            return disconnectResult;
+            if (disconnectResult == ESP_ERR_WIFI_NOT_CONNECT) {
+                suppressDisconnectEvent_ = false;
+            }
         }
+
+        return StartSoftAp();
 
     case WifiState::kStopped:
         scheduledReconnectDelayMs_ = 0;
+
+        {
+            const esp_err_t apResult = StopSoftAp();
+            if (apResult != ESP_OK) {
+                return apResult;
+            }
+        }
+
         if (!wifiStarted_) {
             return ESP_OK;
         }
@@ -234,6 +252,12 @@ esp_err_t WifiManagerEspIdfAdapter::Deinit()
         ownsWifiInit_ = false;
     }
 
+    if (ownsApNetif_ && apNetif_ != nullptr) {
+        esp_netif_destroy_default_wifi(apNetif_);
+        apNetif_ = nullptr;
+        ownsApNetif_ = false;
+    }
+
     if (ownsStaNetif_ && staNetif_ != nullptr) {
         esp_netif_destroy_default_wifi(staNetif_);
         staNetif_ = nullptr;
@@ -325,6 +349,67 @@ esp_err_t WifiManagerEspIdfAdapter::EnsureWifiStarted()
     }
 
     wifiStarted_ = true;
+    return ESP_OK;
+}
+
+esp_err_t WifiManagerEspIdfAdapter::StartSoftAp()
+{
+    if (apNetif_ != nullptr) {
+        return ESP_OK;
+    }
+
+    esp_err_t result = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    apNetif_ = esp_netif_create_default_wifi_ap();
+    if (apNetif_ == nullptr) {
+        return ESP_FAIL;
+    }
+
+    ownsApNetif_ = true;
+
+    uint8_t mac[6]{};
+    esp_wifi_get_mac(WIFI_IF_AP, mac);
+
+    char ssid[33]{};
+    std::snprintf(ssid, sizeof(ssid), "%s%02X%02X%02X",
+                  config_.apSsidPrefix, mac[3], mac[4], mac[5]);
+
+    wifi_config_t apConfig{};
+    std::memcpy(apConfig.ap.ssid, ssid, std::strlen(ssid));
+    apConfig.ap.ssid_len = static_cast<uint8_t>(std::strlen(ssid));
+    apConfig.ap.channel = 1;
+    apConfig.ap.authmode = WIFI_AUTH_OPEN;
+    apConfig.ap.max_connection = config_.apMaxConnections;
+
+    result = esp_wifi_set_config(WIFI_IF_AP, &apConfig);
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    ESP_LOGI(kTag, "SoftAP started: %s", ssid);
+    return ESP_OK;
+}
+
+esp_err_t WifiManagerEspIdfAdapter::StopSoftAp()
+{
+    if (apNetif_ == nullptr) {
+        return ESP_OK;
+    }
+
+    esp_err_t result = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    if (ownsApNetif_) {
+        esp_netif_destroy_default_wifi(apNetif_);
+        ownsApNetif_ = false;
+    }
+
+    apNetif_ = nullptr;
     return ESP_OK;
 }
 
